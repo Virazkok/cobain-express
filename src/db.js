@@ -1,40 +1,49 @@
 require('dotenv').config();
 const fs = require('fs');
-const { Client } = require('pg');
+const path = require('path');
+const { Pool } = require('pg');
 
-
-// Load CA certificate
-const ca = fs.readFileSync(process.env.PG_SSL_CA).toString();
-
-
-let client; // Singleton instance
-
-
-function getClient() {
-if (!client) {
-client = new Client({
-host: process.env.PG_HOST,
-port: process.env.PG_PORT,
-user: process.env.PG_USER,
-password: process.env.PG_PASSWORD,
-database: process.env.PG_DATABASE,
-ssl: {
-rejectUnauthorized: true,
-ca,
-},
-});
-
-
-client.connect().then(() => {
-console.log('Database connected');
-}).catch(err => {
-console.error('DB connection error:', err);
-});
+// Pastikan DATABASE_URL tersedia (karena kamu mau pake DATABASE_URL saja)
+if (!process.env.DATABASE_URL) {
+  throw new Error('Missing required environment variable: DATABASE_URL');
 }
 
+// Load CA certificate (optional) with beberapa kandidat path
+function loadCA() {
+  if (!process.env.PG_SSL_CA) return undefined;
 
-return client;
+  const candidates = [
+    process.env.PG_SSL_CA,
+    path.resolve(process.cwd(), process.env.PG_SSL_CA),
+    path.resolve(__dirname, process.env.PG_SSL_CA),
+  ];
+
+  for (const p of [...new Set(candidates)]) {
+    try {
+      return fs.readFileSync(p).toString();
+    } catch (e) {
+      // ignore and try next
+    }
+  }
+
+  throw new Error(
+    `PG_SSL_CA is set but file not found. Tried: ${candidates.join(', ')}`
+  );
 }
 
+let ssl;
+const ca = loadCA();
+if (ca) {
+  // pg accepts ssl: { ca: <string> } — tambahkan rejectUnauthorized jika perlu
+  ssl = { ca };
+}
 
-module.exports = getClient();
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl,
+});
+
+module.exports = {
+  query: (text, params) => pool.query(text, params),
+  pool, // expose pool jika perlu transaksi manual
+};
