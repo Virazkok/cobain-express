@@ -8,14 +8,28 @@ if (!process.env.DATABASE_URL) {
   throw new Error('Missing required environment variable: DATABASE_URL');
 }
 
-// Load CA certificate with extra fallbacks and support for inline PEM
+// Load CA certificate supporting:
+// - inline PEM in PG_SSL_CA
+// - base64 in PG_SSL_CA_B64
+// - file path fallbacks (local) if present
 function loadCA() {
-  const env = process.env.PG_SSL_CA;
-  if (!env) return undefined;
+  const inline = process.env.PG_SSL_CA;
+  const b64 = process.env.PG_SSL_CA_B64;
 
-  if (env.includes('-----BEGIN CERTIFICATE-----')) {
-    return env;
+  if (inline && inline.includes('-----BEGIN CERTIFICATE-----')) {
+    return inline;
   }
+
+  if (b64) {
+    try {
+      return Buffer.from(b64, 'base64').toString('utf8');
+    } catch (e) {
+      console.warn('Failed to decode PG_SSL_CA_B64:', e.message);
+    }
+  }
+
+  const env = inline || process.env.PG_SSL_CA;
+  if (!env) return undefined;
 
   const candidates = [
     env,
@@ -53,17 +67,23 @@ const allowSelfSigned = process.env.PG_SSL_ALLOW_SELF_SIGNED === 'true';
 if (ca) {
   ssl = {
     ca,
-    // jika allowSelfSigned=true, kita nonaktifkan strict verification
     rejectUnauthorized: !allowSelfSigned,
   };
 } else if (allowSelfSigned) {
-  // tidak ada CA tapi eksplisit mengizinkan self-signed
   ssl = { rejectUnauthorized: false };
 }
 
 if (allowSelfSigned) {
   console.warn('PG_SSL_ALLOW_SELF_SIGNED=true — TLS certificate verification is disabled (INSECURE).');
 }
+
+// debug: remove after verifying envs
+console.log('DB SSL config:', {
+  has_DATABASE_URL: !!process.env.DATABASE_URL,
+  has_PG_SSL_CA: !!process.env.PG_SSL_CA,
+  has_PG_SSL_CA_B64: !!process.env.PG_SSL_CA_B64,
+  PG_SSL_ALLOW_SELF_SIGNED: process.env.PG_SSL_ALLOW_SELF_SIGNED,
+});
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
