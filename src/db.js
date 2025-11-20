@@ -13,12 +13,10 @@ function loadCA() {
   const env = process.env.PG_SSL_CA;
   if (!env) return undefined;
 
-  // Jika env berisi langsung isi PEM, kembalikan langsung
   if (env.includes('-----BEGIN CERTIFICATE-----')) {
     return env;
   }
 
-  // kandidat path tambahan (cwd, __dirname, parent, langsung basename di certs)
   const candidates = [
     env,
     path.resolve(process.cwd(), env),
@@ -32,11 +30,10 @@ function loadCA() {
     try {
       return fs.readFileSync(p, 'utf8');
     } catch (e) {
-      // ignore, coba kandidat berikutnya
+      // ignore
     }
   }
 
-  // Jika ingin toleran, set ALLOW_MISSING_PG_SSL_CA=true di .env agar tidak throw
   if (process.env.ALLOW_MISSING_PG_SSL_CA === 'true') {
     console.warn(
       `PG_SSL_CA is set but file not found. Tried: ${candidates.join(', ')}. Continuing without CA.`
@@ -51,8 +48,21 @@ function loadCA() {
 
 let ssl;
 const ca = loadCA();
+const allowSelfSigned = process.env.PG_SSL_ALLOW_SELF_SIGNED === 'true';
+
 if (ca) {
-  ssl = { ca };
+  ssl = {
+    ca,
+    // jika allowSelfSigned=true, kita nonaktifkan strict verification
+    rejectUnauthorized: !allowSelfSigned,
+  };
+} else if (allowSelfSigned) {
+  // tidak ada CA tapi eksplisit mengizinkan self-signed
+  ssl = { rejectUnauthorized: false };
+}
+
+if (allowSelfSigned) {
+  console.warn('PG_SSL_ALLOW_SELF_SIGNED=true — TLS certificate verification is disabled (INSECURE).');
 }
 
 const pool = new Pool({
